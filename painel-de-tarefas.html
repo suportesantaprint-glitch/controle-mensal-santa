@@ -1,0 +1,1468 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sistema de Tarefas & Calendário | MongoDB Atlas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --bg-surface: #111726;
+      --bg-card: #161f33;
+      --bg-card-hover: #1c2842;
+      --border: #232f48;
+      --border-focus: #3b82f6;
+      --tx: #f1f5f9;
+      --tx-muted: #94a3b8;
+      --tx-subtle: #64748b;
+      
+      --pri: #3b82f6;
+      --pri-glow: rgba(59, 130, 246, 0.25);
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.2);
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --purple: #8b5cf6;
+      
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      
+      --c-0: #3b82f6; /* Blue */
+      --c-1: #10b981; /* Green */
+      --c-2: #f59e0b; /* Amber */
+      --c-3: #ef4444; /* Red */
+      --c-4: #8b5cf6; /* Purple */
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      background: var(--bg);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.08) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.06) 0px, transparent 50%);
+      color: var(--tx);
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    button, input, select, textarea {
+      font-family: inherit;
+      color: inherit;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      background: none;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--border-focus);
+      outline-offset: 2px;
+    }
+
+    /* Top Navbar */
+    header {
+      background: rgba(17, 23, 38, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 40;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-icon {
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      border-radius: var(--radius-sm);
+      display: grid;
+      place-items: center;
+      box-shadow: 0 4px 12px var(--pri-glow);
+    }
+
+    .brand-icon svg { width: 20px; height: 20px; fill: white; }
+
+    .brand h1 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      background: linear-gradient(to right, #ffffff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .db-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 12px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #34d399;
+      transition: all 0.3s ease;
+    }
+
+    .db-badge.offline {
+      background: rgba(239, 68, 68, 0.1);
+      border-color: rgba(239, 68, 68, 0.25);
+      color: #f87171;
+    }
+
+    .db-badge .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulse 2s infinite;
+    }
+
+    .db-badge.offline .dot {
+      background: #ef4444;
+      box-shadow: 0 0 10px #ef4444;
+      animation: none;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    .sp { flex: 1; }
+
+    /* Segmented switch (Calendário / Quadro) */
+    .view-toggle {
+      display: flex;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 3px;
+      gap: 3px;
+    }
+
+    .view-toggle button {
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--tx-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .view-toggle button.active {
+      background: var(--pri);
+      color: #ffffff;
+      box-shadow: 0 2px 8px var(--pri-glow);
+    }
+
+    #clock {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--tx-muted);
+      background: var(--bg-surface);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      max-width: 1540px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    /* Banner Alert */
+    #alert {
+      display: none;
+      background: linear-gradient(90deg, rgba(239, 68, 68, 0.15), rgba(245, 158, 11, 0.15));
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      border-radius: var(--radius-md);
+      padding: 12px 18px;
+      margin-bottom: 20px;
+      color: #fca5a5;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 4px 16px rgba(239, 68, 68, 0.1);
+    }
+
+    /* Stats Grid */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .stat-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .stat-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .stat-card strong {
+      font-size: 28px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.5px;
+    }
+
+    .stat-card span {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--tx-muted);
+    }
+
+    .stat-card.c-all strong { color: #f8fafc; }
+    .stat-card.c-todo strong { color: var(--pri); }
+    .stat-card.c-doing strong { color: var(--warning); }
+    .stat-card.c-done strong { color: var(--success); }
+    .stat-card.c-today strong { color: var(--purple); }
+    .stat-card.c-late strong { color: var(--danger); }
+
+    /* Progress bar */
+    .prog-section {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 18px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .prog-info {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--tx-muted);
+      min-width: 260px;
+    }
+
+    .bar-bg {
+      flex: 1;
+      height: 8px;
+      background: var(--bg);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+      width: 0%;
+      border-radius: 9999px;
+      transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Actions & Toolbar */
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+      align-items: center;
+    }
+
+    .search-box {
+      flex: 1;
+      min-width: 240px;
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px 10px 38px;
+      font-size: 14px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-box input:focus {
+      border-color: var(--pri);
+      box-shadow: 0 0 0 3px var(--pri-glow);
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      fill: var(--tx-muted);
+      pointer-events: none;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 16px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--tx);
+      transition: all 0.2s;
+    }
+
+    .btn:hover {
+      background: var(--bg-card);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn.primary {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      border-color: #3b82f6;
+      color: #ffffff;
+      box-shadow: 0 4px 14px var(--pri-glow);
+    }
+
+    .btn.primary:hover {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      transform: translateY(-1px);
+    }
+
+    .btn.danger {
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+
+    .btn.danger:hover {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: var(--danger);
+    }
+
+    /* Layout Grid */
+    .layout-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    /* Calendar View */
+    .cal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.01);
+    }
+
+    .cal-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .cal-header h2 {
+      font-size: 18px;
+      font-weight: 700;
+      text-transform: capitalize;
+      min-width: 180px;
+    }
+
+    .grid-days-header {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      border-bottom: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.15);
+    }
+
+    .dow {
+      padding: 10px 8px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--tx-subtle);
+    }
+
+    .grid-month {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+    }
+
+    .day {
+      min-height: 110px;
+      padding: 8px;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: background 0.15s;
+    }
+
+    .day:nth-child(7n) { border-right: none; }
+    .day:hover { background: var(--bg-card); }
+    .day.off-month { opacity: 0.35; }
+
+    .day.selected {
+      background: rgba(59, 130, 246, 0.12);
+      box-shadow: inset 0 0 0 2px var(--pri);
+    }
+
+    .day-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2px;
+    }
+
+    .day-num {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--tx-muted);
+    }
+
+    .day.today .day-num {
+      background: var(--pri);
+      color: white;
+      font-weight: 700;
+      box-shadow: 0 2px 8px var(--pri-glow);
+    }
+
+    .day-note-badge {
+      font-size: 10px;
+      color: var(--warning);
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .chip {
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      background: var(--bg-card);
+      border-left: 3px solid var(--c-0);
+      color: var(--tx);
+      transition: transform 0.15s;
+    }
+
+    .chip:hover { transform: translateX(2px); }
+    .chip.done { text-decoration: line-through; opacity: 0.55; }
+
+    .chip.c-0 { border-left-color: var(--c-0); }
+    .chip.c-1 { border-left-color: var(--c-1); }
+    .chip.c-2 { border-left-color: var(--c-2); }
+    .chip.c-3 { border-left-color: var(--c-3); }
+    .chip.c-4 { border-left-color: var(--c-4); }
+
+    .more-chips {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--tx-muted);
+      padding: 1px 4px;
+    }
+
+    /* Sidebar Details */
+    aside .card {
+      padding: 20px;
+    }
+
+    aside h3 {
+      font-size: 17px;
+      font-weight: 700;
+      text-transform: capitalize;
+    }
+
+    aside .day-subtitle {
+      font-size: 12px;
+      color: var(--tx-muted);
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--tx-subtle);
+      margin: 18px 0 8px;
+    }
+
+    .task-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--c-0);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      margin-top: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .task-item:hover {
+      border-color: var(--border-focus);
+      transform: translateX(3px);
+    }
+
+    .task-item.done b {
+      text-decoration: line-through;
+      opacity: 0.6;
+    }
+
+    .task-item b {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--tx);
+    }
+
+    .task-item-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--tx-muted);
+      margin-top: 5px;
+    }
+
+    .task-item-meta .late {
+      color: var(--danger);
+      font-weight: 600;
+    }
+
+    .task-item.c-0 { border-left-color: var(--c-0); }
+    .task-item.c-1 { border-left-color: var(--c-1); }
+    .task-item.c-2 { border-left-color: var(--c-2); }
+    .task-item.c-3 { border-left-color: var(--c-3); }
+    .task-item.c-4 { border-left-color: var(--c-4); }
+
+    textarea.note-area {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-size: 13px;
+      color: var(--tx);
+      transition: border-color 0.2s;
+    }
+
+    textarea.note-area:focus {
+      border-color: var(--pri);
+    }
+
+    .empty-state {
+      color: var(--tx-subtle);
+      font-size: 13px;
+      padding: 16px 0;
+      text-align: center;
+      font-style: italic;
+    }
+
+    /* Kanban Board */
+    .kanban-board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .kanban-col {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 14px;
+      min-height: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .kanban-col.drag-over {
+      border-color: var(--pri);
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .col-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 6px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .col-header h2 {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .col-count {
+      background: var(--bg-card);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--tx-muted);
+    }
+
+    .kanban-cards {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 80px;
+    }
+
+    .btn-add-col {
+      width: 100%;
+      margin-top: 6px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px;
+      font-size: 13px;
+      color: var(--tx-muted);
+      font-weight: 600;
+    }
+
+    .btn-add-col:hover {
+      color: var(--tx);
+      border-color: var(--pri);
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    /* Modal Dialog */
+    dialog {
+      background: var(--bg-surface);
+      color: var(--tx);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      width: min(480px, 94vw);
+      margin: auto;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+    }
+
+    dialog h2 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--tx-muted);
+      margin-bottom: 6px;
+    }
+
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 9px 12px;
+      font-size: 14px;
+    }
+
+    .form-group textarea { min-height: 90px; resize: vertical; }
+
+    .color-swatches {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .color-swatches input { display: none; }
+    
+    .color-swatches span {
+      display: block;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 3px solid transparent;
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+
+    .color-swatches span:hover { transform: scale(1.1); }
+    .color-swatches input:checked + span {
+      border-color: #ffffff;
+      box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+    }
+
+    .sw-0 { background: var(--c-0); }
+    .sw-1 { background: var(--c-1); }
+    .sw-2 { background: var(--c-2); }
+    .sw-3 { background: var(--c-3); }
+    .sw-4 { background: var(--c-4); }
+
+    .dialog-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 24px;
+      align-items: center;
+    }
+
+    /* Toast Notification */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 100;
+    }
+
+    #toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    #toast.success { border-color: var(--success); color: #34d399; }
+    #toast.error { border-color: var(--danger); color: #f87171; }
+
+    /* Responsive */
+    @media (max-width: 960px) {
+      .layout-grid { grid-template-columns: 1fr; }
+      .kanban-board { grid-template-columns: 1fr; }
+      .day { min-height: 70px; padding: 4px; }
+      .chip { font-size: 11px; padding: 2px 4px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+      </div>
+      <div>
+        <h1>Painel de Tarefas</h1>
+      </div>
+    </div>
+
+    <!-- DB Status indicator loaded from .env -->
+    <div class="db-badge" id="db-badge" title="Status da conexão com o MongoDB Atlas via .env">
+      <div class="dot"></div>
+      <span id="db-status-text">Conectando ao Atlas...</span>
+    </div>
+
+    <div class="sp"></div>
+
+    <div class="view-toggle" role="group" aria-label="Visualização">
+      <button data-action="view" data-view="cal" class="active" id="btn-cal">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/></svg>
+        Calendário
+      </button>
+      <button data-action="view" data-view="board" id="btn-board">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h4v16H4V4zm6 0h4v10h-4V4zm6 0h4v14h-4V4z"/></svg>
+        Quadro
+      </button>
+    </div>
+
+    <span id="clock">00:00:00</span>
+  </header>
+
+  <main>
+    <div id="alert"></div>
+
+    <!-- Estatísticas -->
+    <div class="stats" id="stats"></div>
+
+    <!-- Barra de Progresso -->
+    <div class="prog-section">
+      <span class="prog-info" id="prog-label">Progresso geral</span>
+      <div class="bar-bg">
+        <div class="bar-fill" id="prog-bar"></div>
+      </div>
+    </div>
+
+    <!-- Barra de Ações e Filtros -->
+    <div class="toolbar">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        <input type="search" id="search-input" placeholder="Buscar por tarefa, responsável ou anotação...">
+      </div>
+      <button class="btn primary" data-action="new-task">+ Nova Tarefa</button>
+      <button class="btn" data-action="refresh" title="Recarregar do MongoDB">↻ Sincronizar</button>
+      <button class="btn" data-action="export">Exportar JSON</button>
+      <button class="btn" data-action="import">Importar JSON</button>
+      <input type="file" id="file-input" accept=".json" hidden>
+    </div>
+
+    <!-- Palco Principal (Calendário ou Kanban) + Lateral -->
+    <div class="layout-grid">
+      <section id="stage"></section>
+      <aside>
+        <div class="card" id="side-panel"></div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Modal de Criação / Edição de Tarefa -->
+  <dialog id="task-dialog">
+    <form id="task-form" method="dialog">
+      <h2 id="modal-title">Nova Tarefa</h2>
+      
+      <div class="form-group">
+        <label for="f-title">Título *</label>
+        <input id="f-title" required maxlength="120" placeholder="Ex: Desenvolver nova funcionalidade">
+      </div>
+
+      <div class="form-group">
+        <label for="f-date">Data Limite / Execução</label>
+        <input id="f-date" type="date">
+      </div>
+
+      <div class="form-group">
+        <label for="f-status">Status</label>
+        <select id="f-status">
+          <option value="todo">A fazer</option>
+          <option value="doing">Em andamento</option>
+          <option value="done">Concluído</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="f-worker">Responsável</label>
+        <input id="f-worker" maxlength="60" placeholder="Ex: Mariana, Equipe de Suporte">
+      </div>
+
+      <div class="form-group">
+        <label>Etiqueta de Cor</label>
+        <div class="color-swatches" id="f-colors"></div>
+      </div>
+
+      <div class="form-group">
+        <label for="f-notes">Anotações / Detalhes</label>
+        <textarea id="f-notes" placeholder="Descreva os requisitos, links ou instruções..."></textarea>
+      </div>
+
+      <div class="dialog-actions">
+        <button class="btn primary" value="ok">Salvar no Banco</button>
+        <button class="btn" type="button" data-action="close-modal">Cancelar</button>
+        <span class="sp"></span>
+        <button class="btn danger" type="button" id="btn-delete" data-action="delete-task">Excluir</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Toast Notifier -->
+  <div id="toast"></div>
+
+  <script>
+    const $ = s => document.querySelector(s);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    
+    const COLORS = ['c-0', 'c-1', 'c-2', 'c-3', 'c-4'];
+    const STATUS_MAP = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluído' };
+    const today = iso(new Date());
+
+    // Estado da Aplicação
+    let State = {
+      tasks: [],
+      notes: {}
+    };
+
+    let currentDate = new Date();
+    currentDate.setDate(1);
+    let selectedDate = today;
+    let currentView = 'cal';
+    let searchQuery = '';
+    let editingTaskId = null;
+    let isConnectedToAtlas = false;
+
+    // Notificações Toast
+    function showToast(msg, type = 'success') {
+      const toast = $('#toast');
+      toast.className = `show ${type}`;
+      toast.textContent = msg;
+      setTimeout(() => { toast.className = ''; }, 3200);
+    }
+
+    // Verificar Conexão com API e MongoDB Atlas
+    async function checkDbStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        const badge = $('#db-badge');
+        const text = $('#db-status-text');
+
+        if (data.connected) {
+          isConnectedToAtlas = true;
+          badge.classList.remove('offline');
+          text.textContent = `MongoDB Atlas: Conectado (${data.database})`;
+        } else {
+          isConnectedToAtlas = false;
+          badge.classList.add('offline');
+          text.textContent = data.error ? `Atlas Offline (${data.error.slice(0, 20)}...)` : 'MongoDB Offline';
+        }
+      } catch (err) {
+        isConnectedToAtlas = false;
+        $('#db-badge').classList.add('offline');
+        $('#db-status-text').textContent = 'Servidor API desconectado';
+      }
+    }
+
+    // Carregar Tarefas e Anotações da API
+    async function loadData() {
+      try {
+        const [tasksRes, notesRes] = await Promise.all([
+          fetch('/api/tasks'),
+          fetch('/api/notes')
+        ]);
+
+        if (tasksRes.ok) {
+          State.tasks = await tasksRes.json();
+        }
+        if (notesRes.ok) {
+          State.notes = await notesRes.json();
+        }
+        render();
+      } catch (err) {
+        console.warn('Erro ao carregar do servidor, utilizando armazenamento local se disponível:', err);
+        const local = localStorage.getItem('painel-tarefas-fallback');
+        if (local) {
+          State = JSON.parse(local);
+        }
+        render();
+      }
+    }
+
+    // Salvar Tarefa na API (MongoDB)
+    async function saveTaskApi(task, isEdit) {
+      try {
+        const url = isEdit ? `/api/tasks/${task.id}` : '/api/tasks';
+        const method = isEdit ? 'PUT' : 'POST';
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(task)
+        });
+
+        if (!res.ok) throw new Error('Falha ao salvar no banco');
+        showToast(isEdit ? 'Tarefa atualizada no MongoDB!' : 'Tarefa salva no MongoDB!');
+        await loadData();
+      } catch (err) {
+        showToast('Erro ao salvar no servidor: ' + err.message, 'error');
+      }
+    }
+
+    // Excluir Tarefa na API
+    async function deleteTaskApi(id) {
+      try {
+        const res = await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Falha ao excluir');
+        showToast('Tarefa excluída do MongoDB!');
+        await loadData();
+      } catch (err) {
+        showToast('Erro ao excluir: ' + err.message, 'error');
+      }
+    }
+
+    // Salvar Anotação na API
+    let noteDebounceTimer = null;
+    function saveNoteApi(date, content) {
+      clearTimeout(noteDebounceTimer);
+      noteDebounceTimer = setTimeout(async () => {
+        try {
+          await fetch(`/api/notes/${date}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+          });
+          showToast('Anotação salva no Atlas!');
+        } catch (err) {
+          console.error(err);
+        }
+      }, 500);
+    }
+
+    // Filtragem de tarefas
+    const filterList = () => State.tasks.filter(t => 
+      !searchQuery || (t.t + ' ' + (t.w || '') + ' ' + (t.n || '')).toLowerCase().includes(searchQuery)
+    );
+
+    const isLate = t => t.s !== 'done' && t.d && t.d < today;
+    const formatDate = d => d ? d.split('-').reverse().slice(0, 2).join('/') : 'sem data';
+    const formatLongDate = d => {
+      try {
+        return new Date(d + 'T12:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+      } catch (e) {
+        return d;
+      }
+    };
+
+    function taskCardHTML(t, draggable = false) {
+      const colorClass = COLORS[t.c] || 'c-0';
+      return `
+        <div class="task-item ${colorClass} ${t.s === 'done' ? 'done' : ''}" 
+             data-action="edit-task" data-id="${t.id}" ${draggable ? 'draggable="true"' : ''}>
+          <b>${esc(t.t)}</b>
+          <div class="task-item-meta">
+            <span class="${isLate(t) ? 'late' : ''}">
+              ${isLate(t) ? '⚠️ Atrasada · ' : ''}${formatDate(t.d)}
+            </span>
+            ${t.w ? `<span>👤 ${esc(t.w)}</span>` : ''}
+            ${t.n ? `<span>📝 Detalhes</span>` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    // Renderização Geral
+    function render() {
+      const all = State.tasks;
+      const done = all.filter(t => t.s === 'done').length;
+      const late = all.filter(isLate).length;
+      const todayCount = all.filter(t => t.d === today && t.s !== 'done').length;
+
+      // Stats
+      $('#stats').innerHTML = [
+        [all.length, 'Total de tarefas', 'c-all'],
+        [all.filter(t => t.s === 'todo').length, 'A fazer', 'c-todo'],
+        [all.filter(t => t.s === 'doing').length, 'Em andamento', 'c-doing'],
+        [done, 'Concluídas', 'c-done'],
+        [todayCount, 'Para hoje', 'c-today'],
+        [late, 'Atrasadas', 'c-late']
+      ].map(([n, l, c]) => `
+        <div class="stat-card ${c}">
+          <strong>${n}</strong>
+          <span>${l}</span>
+        </div>
+      `).join('');
+
+      // Progresso
+      const pct = all.length ? Math.round((done / all.length) * 100) : 0;
+      $('#prog-bar').style.width = pct + '%';
+      $('#prog-label').textContent = `Progresso geral: ${done} de ${all.length} concluídas (${pct}%)`;
+
+      // Alertas
+      const alertEl = $('#alert');
+      if (late > 0 || todayCount > 0) {
+        alertEl.style.display = 'block';
+        alertEl.innerHTML = `<strong>Atenção:</strong> ` + [
+          late ? `<strong>${late}</strong> tarefa(s) atrasada(s)` : '',
+          todayCount ? `<strong>${todayCount}</strong> tarefa(s) para hoje` : ''
+        ].filter(Boolean).join(' &bull; ');
+      } else {
+        alertEl.style.display = 'none';
+      }
+
+      // Alternar Botões de Visão
+      $('#btn-cal').classList.toggle('active', currentView === 'cal');
+      $('#btn-board').classList.toggle('active', currentView === 'board');
+
+      // Stage
+      $('#stage').innerHTML = currentView === 'cal' ? renderCalendar() : renderBoard();
+      renderSidePanel();
+    }
+
+    // Renderizar Calendário
+    function renderCalendar() {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const firstDayOfMonth = new Date(year, month, 1).getDay();
+      const startDate = new Date(year, month, 1 - firstDayOfMonth);
+      
+      const items = filterList();
+      const byDate = {};
+      items.forEach(t => {
+        if (t.d) {
+          byDate[t.d] = byDate[t.d] || [];
+          byDate[t.d].push(t);
+        }
+      });
+
+      let html = `
+        <div class="card">
+          <div class="cal-header">
+            <h2>${currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</h2>
+            <div class="cal-nav">
+              <button class="btn" data-action="prev-month" aria-label="Mês anterior">‹</button>
+              <button class="btn" data-action="today-month">Hoje</button>
+              <button class="btn" data-action="next-month" aria-label="Próximo mês">›</button>
+            </div>
+          </div>
+          <div class="grid-days-header">
+            ${['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => `<div class="dow">${d}</div>`).join('')}
+          </div>
+          <div class="grid-month">
+      `;
+
+      for (let i = 0; i < 42; i++) {
+        const d = new Date(startDate);
+        d.setDate(startDate.getDate() + i);
+        const dateKey = iso(d);
+        const dayTasks = byDate[dateKey] || [];
+        const isOff = d.getMonth() !== month;
+        const isCurrentToday = dateKey === today;
+        const isSelected = dateKey === selectedDate;
+        const hasNote = Boolean(State.notes[dateKey]);
+
+        html += `
+          <div class="day ${isOff ? 'off-month' : ''} ${isCurrentToday ? 'today' : ''} ${isSelected ? 'selected' : ''}" 
+               data-action="select-day" data-date="${dateKey}">
+            <div class="day-header">
+              <span class="day-num">${d.getDate()}</span>
+              ${hasNote ? '<span class="day-note-badge" title="Possui anotações">📝</span>' : ''}
+            </div>
+            ${dayTasks.slice(0, 3).map(t => `
+              <div class="chip ${COLORS[t.c] || 'c-0'} ${t.s === 'done' ? 'done' : ''}" 
+                   data-action="edit-task" data-id="${t.id}">
+                ${esc(t.t)}
+              </div>
+            `).join('')}
+            ${dayTasks.length > 3 ? `<div class="more-chips">+${dayTasks.length - 3} mais</div>` : ''}
+          </div>
+        `;
+      }
+
+      html += `</div></div>`;
+      return html;
+    }
+
+    // Renderizar Quadro Kanban
+    function renderBoard() {
+      const items = filterList();
+      return `
+        <div class="kanban-board">
+          ${Object.entries(STATUS_MAP).map(([sKey, sLabel]) => {
+            const colTasks = items.filter(t => t.s === sKey).sort((a, b) => (a.d || '9').localeCompare(b.d || '9'));
+            return `
+              <div class="kanban-col" data-status="${sKey}">
+                <div class="col-header">
+                  <h2>${sLabel}</h2>
+                  <span class="col-count">${colTasks.length}</span>
+                </div>
+                <div class="kanban-cards">
+                  ${colTasks.map(t => taskCardHTML(t, true)).join('') || '<div class="empty-state">Sem tarefas nesta coluna</div>'}
+                </div>
+                <button class="btn-add-col" data-action="new-task" data-status="${sKey}">+ Adicionar</button>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    // Painel Lateral (Detalhes do dia + Anotações)
+    function renderSidePanel() {
+      const dayTasks = filterList().filter(t => t.d === selectedDate);
+      const isDayToday = selectedDate === today;
+
+      $('#side-panel').innerHTML = `
+        <h3>${formatLongDate(selectedDate)}</h3>
+        <div class="day-subtitle">${isDayToday ? '⭐ Hoje' : 'Dia selecionado'}</div>
+
+        <div class="section-title">Tarefas do Dia</div>
+        ${dayTasks.map(t => taskCardHTML(t)).join('') || '<div class="empty-state">Nenhuma tarefa marcada</div>'}
+
+        <button class="btn primary" style="margin-top: 12px; width: 100%; justify-content: center;" data-action="new-task-on-day">
+          + Nova Tarefa Neste Dia
+        </button>
+
+        <div class="section-title">Anotações do Dia (Atlas Sync)</div>
+        <textarea class="note-area" id="day-notes-input" placeholder="Escreva lembretes, observações, atas de reunião...">${esc(State.notes[selectedDate] || '')}</textarea>
+      `;
+
+      $('#day-notes-input').oninput = e => {
+        const val = e.target.value;
+        if (val.trim()) {
+          State.notes[selectedDate] = val;
+        } else {
+          delete State.notes[selectedDate];
+        }
+        saveNoteApi(selectedDate, val);
+      };
+
+      $('#day-notes-input').onblur = () => {
+        if (currentView === 'cal') render();
+      };
+    }
+
+    // Modal de Tarefa
+    function openTaskModal(id = null, preset = {}) {
+      editingTaskId = id;
+      const t = State.tasks.find(x => x.id === id) || {
+        t: '',
+        d: selectedDate,
+        s: 'todo',
+        c: 0,
+        w: '',
+        n: '',
+        ...preset
+      };
+
+      $('#modal-title').textContent = id ? 'Editar Tarefa' : 'Nova Tarefa';
+      $('#f-title').value = t.t || '';
+      $('#f-date').value = t.d || '';
+      $('#f-status').value = t.s || 'todo';
+      $('#f-worker').value = t.w || '';
+      $('#f-notes').value = t.n || '';
+
+      // Radio de Cores
+      $('#f-colors').innerHTML = COLORS.map((c, i) => `
+        <label>
+          <input type="radio" name="color" value="${i}" ${i === (t.c || 0) ? 'checked' : ''}>
+          <span class="sw-${i}"></span>
+        </label>
+      `).join('');
+
+      $('#btn-delete').style.display = id ? 'inline-flex' : 'none';
+      $('#task-dialog').showModal();
+    }
+
+    // Submissão do Formulário
+    $('#task-form').addEventListener('submit', async e => {
+      if (e.submitter && e.submitter.value !== 'ok') return;
+      e.preventDefault();
+
+      const title = $('#f-title').value.trim();
+      if (!title) return;
+
+      const colorVal = parseInt(document.querySelector('[name=color]:checked')?.value || '0', 10);
+      const taskData = {
+        id: editingTaskId || uid(),
+        t: title,
+        d: $('#f-date').value,
+        s: $('#f-status').value,
+        w: $('#f-worker').value.trim(),
+        n: $('#f-notes').value.trim(),
+        c: colorVal
+      };
+
+      $('#task-dialog').close();
+      await saveTaskApi(taskData, Boolean(editingTaskId));
+
+      if (taskData.d) {
+        selectedDate = taskData.d;
+        const [y, m] = taskData.d.split('-');
+        currentDate = new Date(+y, +m - 1, 1);
+      }
+    });
+
+    // Eventos Globais de Clique
+    document.addEventListener('click', async e => {
+      const el = e.target.closest('[data-action]');
+      if (!el) return;
+
+      const action = el.dataset.action;
+
+      if (action === 'view') {
+        currentView = el.dataset.view;
+        render();
+      } else if (action === 'prev-month') {
+        currentDate.setMonth(currentDate.getMonth() - 1);
+        render();
+      } else if (action === 'next-month') {
+        currentDate.setMonth(currentDate.getMonth() + 1);
+        render();
+      } else if (action === 'today-month') {
+        currentDate = new Date();
+        currentDate.setDate(1);
+        selectedDate = today;
+        render();
+      } else if (action === 'select-day') {
+        selectedDate = el.dataset.date;
+        render();
+      } else if (action === 'edit-task') {
+        openTaskModal(el.dataset.id);
+      } else if (action === 'new-task') {
+        openTaskModal(null, el.dataset.status ? { s: el.dataset.status } : {});
+      } else if (action === 'new-task-on-day') {
+        openTaskModal(null, { d: selectedDate });
+      } else if (action === 'close-modal') {
+        $('#task-dialog').close();
+      } else if (action === 'delete-task') {
+        if (confirm('Deseja realmente excluir esta tarefa do banco?')) {
+          $('#task-dialog').close();
+          await deleteTaskApi(editingTaskId);
+        }
+      } else if (action === 'refresh') {
+        await checkDbStatus();
+        await loadData();
+        showToast('Dados sincronizados com o Atlas!');
+      } else if (action === 'export') {
+        const blob = new Blob([JSON.stringify(State, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `painel-tarefas-backup-${today}.json`;
+        a.click();
+      } else if (action === 'import') {
+        $('#file-input').click();
+      }
+    });
+
+    // Importação de JSON
+    $('#file-input').onchange = async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+
+        const res = await fetch('/api/tasks/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        if (res.ok) {
+          showToast('Importação concluída com sucesso!');
+          await loadData();
+        } else {
+          throw new Error('Falha ao importar no servidor');
+        }
+      } catch (err) {
+        alert('Erro ao importar arquivo: ' + err.message);
+      }
+      e.target.value = '';
+    };
+
+    // Busca em tempo real
+    $('#search-input').oninput = e => {
+      searchQuery = e.target.value.toLowerCase();
+      render();
+    };
+
+    // Drag and Drop para o Kanban
+    let draggedTaskId = null;
+    document.addEventListener('dragstart', e => {
+      const item = e.target.closest('.task-item[draggable]');
+      if (item) draggedTaskId = item.dataset.id;
+    });
+
+    document.addEventListener('dragover', e => {
+      const col = e.target.closest('.kanban-col');
+      if (col && draggedTaskId) {
+        e.preventDefault();
+        document.querySelectorAll('.kanban-col').forEach(c => c.classList.toggle('drag-over', c === col));
+      }
+    });
+
+    document.addEventListener('drop', async e => {
+      const col = e.target.closest('.kanban-col');
+      if (!col || !draggedTaskId) return;
+      e.preventDefault();
+
+      const task = State.tasks.find(t => t.id === draggedTaskId);
+      const newStatus = col.dataset.status;
+      if (task && task.s !== newStatus) {
+        task.s = newStatus;
+        await saveTaskApi(task, true);
+      }
+      draggedTaskId = null;
+      render();
+    });
+
+    document.addEventListener('dragend', () => {
+      draggedTaskId = null;
+      document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
+    });
+
+    // Relógio
+    const updateClock = () => {
+      $('#clock').textContent = new Date().toLocaleTimeString('pt-BR');
+    };
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    // Inicialização
+    async function init() {
+      await checkDbStatus();
+      await loadData();
+      setInterval(checkDbStatus, 15000); // Polling do status do banco a cada 15s
+    }
+
+    init();
+  </script>
+</body>
+</html>

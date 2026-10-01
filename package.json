@@ -1,0 +1,24 @@
+{
+  "name": "sistema-painel-tarefas-vercel-mongodb",
+  "version": "1.0.0",
+  "description": "Sistema Vercel Serverless conectado direto ao MongoDB Atlas via .env",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'Vercel build OK'"
+  },
+  "keywords": [
+    "vercel",
+    "serverless",
+    "mongodb-atlas",
+    "html",
+    "env"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mongodb": "^6.13.0"
+  }
+}
