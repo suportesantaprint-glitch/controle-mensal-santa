@@ -1,5 +1,6 @@
 const express = require('express');
-const { MongoClient } = require('mongodb');
+const { MongoClient, ServerApiVersion } = require('mongodb');
+const tls = require('tls');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const path = require('path');
@@ -13,6 +14,12 @@ if (fs.existsSync(path.join(process.cwd(), '.env'))) {
 } else {
   dotenv.config();
 }
+
+// O Atlas aceita TLS 1.2 e 1.3, mas alguns runtimes serverless/OpenSSL
+// apresentam ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR ao negociar TLS 1.3.
+// Fixamos o teto em TLS 1.2 para manter compatibilidade sem desabilitar validação SSL.
+tls.DEFAULT_MIN_VERSION = 'TLSv1.2';
+tls.DEFAULT_MAX_VERSION = 'TLSv1.2';
 
 const app = express();
 
@@ -29,45 +36,101 @@ app.use(express.static(path.join(process.cwd(), 'public')));
 // Cache de conexão para ambiente Serverless da Vercel
 let cachedClient = null;
 let cachedDb = null;
+let connectionPromise = null;
 
-async function getDatabase() {
-  if (cachedClient && cachedDb) {
-    try {
-      // Testar conexão ativa rápida
-      await cachedDb.command({ ping: 1 });
-      return { client: cachedClient, db: cachedDb };
-    } catch (pingErr) {
-      cachedClient = null;
-      cachedDb = null;
-    }
+function normalizeMongoError(err) {
+  const message = err?.message || String(err || 'Erro desconhecido');
+
+  if (/TLSV1_ALERT_INTERNAL_ERROR|SSL alert number 80/i.test(message)) {
+    return {
+      code: 'MONGODB_TLS_HANDSHAKE',
+      message,
+      hint: 'Falha no handshake TLS com o MongoDB Atlas. O backend já força TLS 1.2; confirme também se o cluster está ativo e acessível.'
+    };
   }
 
+  if (/authentication failed|bad auth|AuthenticationFailed/i.test(message)) {
+    return {
+      code: 'MONGODB_AUTH',
+      message,
+      hint: 'Usuário ou senha do MongoDB Atlas inválidos. Atualize MONGODB_URI na Vercel.'
+    };
+  }
+
+  if (/ENOTFOUND|querySrv|DNS|SRV/i.test(message)) {
+    return {
+      code: 'MONGODB_DNS',
+      message,
+      hint: 'Falha de DNS/SRV ao resolver o cluster do MongoDB Atlas.'
+    };
+  }
+
+  if (/Server selection timed out|ECONNREFUSED|ETIMEDOUT/i.test(message)) {
+    return {
+      code: 'MONGODB_NETWORK',
+      message,
+      hint: 'O cluster não respondeu. Confira Network Access no Atlas e se o cluster está ativo.'
+    };
+  }
+
+  return {
+    code: 'MONGODB_UNKNOWN',
+    message,
+    hint: 'Verifique MONGODB_URI, DB_NAME e o estado do cluster no MongoDB Atlas.'
+  };
+}
+
+async function openDatabase() {
   if (!MONGODB_URI) {
     throw new Error('MONGODB_URI não configurada nas variáveis de ambiente da Vercel.');
   }
 
-  try {
-    const client = new MongoClient(MONGODB_URI, {
-      serverSelectionTimeoutMS: 8000,
-      connectTimeoutMS: 10000,
-      maxPoolSize: 10,
-    });
+  const client = new MongoClient(MONGODB_URI, {
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: false,
+      deprecationErrors: true,
+    },
+    serverSelectionTimeoutMS: 8000,
+    connectTimeoutMS: 10000,
+    socketTimeoutMS: 20000,
+    maxPoolSize: 10,
+    minPoolSize: 0,
+    maxIdleTimeMS: 30000,
+    retryReads: true,
+    retryWrites: true,
+  });
 
-    await client.connect();
-    const db = client.db(DB_NAME);
+  await client.connect();
+  const db = client.db(DB_NAME);
+  await db.command({ ping: 1 });
 
-    // Inicializar índices sem travar
-    db.collection('tasks').createIndex({ id: 1 }, { unique: true }).catch(() => {});
-    db.collection('notes').createIndex({ date: 1 }, { unique: true }).catch(() => {});
+  db.collection('tasks').createIndex({ id: 1 }, { unique: true }).catch(() => {});
+  db.collection('notes').createIndex({ date: 1 }, { unique: true }).catch(() => {});
 
-    cachedClient = client;
-    cachedDb = db;
-    return { client, db };
-  } catch (err) {
-    cachedClient = null;
-    cachedDb = null;
-    throw err;
+  cachedClient = client;
+  cachedDb = db;
+  return { client, db };
+}
+
+async function getDatabase() {
+  if (cachedClient && cachedDb) {
+    return { client: cachedClient, db: cachedDb };
   }
+
+  if (!connectionPromise) {
+    connectionPromise = openDatabase()
+      .catch((err) => {
+        cachedClient = null;
+        cachedDb = null;
+        throw err;
+      })
+      .finally(() => {
+        connectionPromise = null;
+      });
+  }
+
+  return connectionPromise;
 }
 
 // Rota de status do sistema e banco
@@ -85,12 +148,19 @@ app.get('/api/status', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (err) {
-    res.json({
+    const problem = normalizeMongoError(err);
+    res.status(503).json({
       status: 'offline',
       connected: false,
-      error: err.message || 'Erro ao conectar ao MongoDB Atlas',
-      hint: 'Verifique se o IP 0.0.0.0/0 está liberado em Network Access no MongoDB Atlas.',
+      code: problem.code,
+      error: problem.message,
+      hint: problem.hint,
       database: DB_NAME,
+      runtime: process.version,
+      tls: {
+        min: tls.DEFAULT_MIN_VERSION,
+        max: tls.DEFAULT_MAX_VERSION
+      },
       timestamp: new Date().toISOString()
     });
   }
