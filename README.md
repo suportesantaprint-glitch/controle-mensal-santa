@@ -17,11 +17,13 @@ Suba os arquivos deste projeto para o seu repositório.
 2. Selecione o repositório do projeto.
 
 ### 3. Configurar as Variáveis de Ambiente no painel da Vercel
+
+> Nunca coloque a URI real do MongoDB no repositório. Use apenas as variáveis de ambiente da Vercel.
 Na seção **Environment Variables**, adicione:
 
 | Chave (Key) | Valor (Value) |
 | :--- | :--- |
-| **`MONGODB_URI`** | `mongodb+srv://suportesantaprint_db_user:3veKOgXWhx8NsCkv@cluster0.8njl4il.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0` |
+| **`MONGODB_URI`** | `mongodb+srv://<usuario>:<senha>@<cluster>/?retryWrites=true&w=majority` |
 | **`DB_NAME`** | `painel_tarefas_db` |
 
 ### 4. Concluir o Deploy
