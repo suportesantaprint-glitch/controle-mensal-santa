@@ -15,8 +15,12 @@ if (fs.existsSync(path.join(process.cwd(), '.env'))) {
 }
 
 const app = express();
-const MONGODB_URI = process.env.MONGODB_URI;
-const DB_NAME = process.env.DB_NAME || 'painel_tarefas_db';
+
+// Sanitizar URI e variáveis de ambiente (remove aspas acidentais)
+const rawUri = process.env.MONGODB_URI || '';
+const MONGODB_URI = rawUri.replace(/^["']|["']$/g, '').trim();
+const rawDbName = process.env.DB_NAME || 'painel_tarefas_db';
+const DB_NAME = rawDbName.replace(/^["']|["']$/g, '').trim();
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -27,39 +31,51 @@ let cachedClient = null;
 let cachedDb = null;
 
 async function getDatabase() {
-  if (cachedDb) {
-    return { client: cachedClient, db: cachedDb };
+  if (cachedClient && cachedDb) {
+    try {
+      // Testar conexão ativa rápida
+      await cachedDb.command({ ping: 1 });
+      return { client: cachedClient, db: cachedDb };
+    } catch (pingErr) {
+      cachedClient = null;
+      cachedDb = null;
+    }
   }
 
   if (!MONGODB_URI) {
     throw new Error('MONGODB_URI não configurada nas variáveis de ambiente da Vercel.');
   }
 
-  const client = new MongoClient(MONGODB_URI, {
-    serverSelectionTimeoutMS: 8000,
-    maxPoolSize: 10,
-  });
-
-  await client.connect();
-  const db = client.db(DB_NAME);
-
-  // Inicializar índices
   try {
-    await db.collection('tasks').createIndex({ id: 1 }, { unique: true });
-    await db.collection('notes').createIndex({ date: 1 }, { unique: true });
-  } catch (e) {}
+    const client = new MongoClient(MONGODB_URI, {
+      serverSelectionTimeoutMS: 8000,
+      connectTimeoutMS: 10000,
+      maxPoolSize: 10,
+    });
 
-  cachedClient = client;
-  cachedDb = db;
-  return { client, db };
+    await client.connect();
+    const db = client.db(DB_NAME);
+
+    // Inicializar índices sem travar
+    db.collection('tasks').createIndex({ id: 1 }, { unique: true }).catch(() => {});
+    db.collection('notes').createIndex({ date: 1 }, { unique: true }).catch(() => {});
+
+    cachedClient = client;
+    cachedDb = db;
+    return { client, db };
+  } catch (err) {
+    cachedClient = null;
+    cachedDb = null;
+    throw err;
+  }
 }
 
 // Rota de status do sistema e banco
 app.get('/api/status', async (req, res) => {
   try {
     const { db } = await getDatabase();
-    const tasksCount = await db.collection('tasks').countDocuments();
-    const notesCount = await db.collection('notes').countDocuments();
+    const tasksCount = await db.collection('tasks').countDocuments().catch(() => 0);
+    const notesCount = await db.collection('notes').countDocuments().catch(() => 0);
 
     res.json({
       status: 'online',
@@ -69,11 +85,13 @@ app.get('/api/status', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (err) {
-    res.status(500).json({
+    res.json({
       status: 'offline',
       connected: false,
-      error: err.message,
-      database: DB_NAME
+      error: err.message || 'Erro ao conectar ao MongoDB Atlas',
+      hint: 'Verifique se o IP 0.0.0.0/0 está liberado em Network Access no MongoDB Atlas.',
+      database: DB_NAME,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -233,5 +251,4 @@ app.put('/api/notes/:date', async (req, res) => {
   }
 });
 
-// Exporta o app compatível com Vercel Serverless Functions
 module.exports = app;
