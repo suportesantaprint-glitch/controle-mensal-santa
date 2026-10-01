@@ -970,47 +970,62 @@
     // Verificar Conexão com API e MongoDB Atlas
     async function checkDbStatus() {
       try {
-        const res = await fetch('/api/status');
+        const res = await fetch('/api/status', { cache: 'no-store' });
         const data = await res.json();
         const badge = $('#db-badge');
         const text = $('#db-status-text');
 
-        if (data.connected) {
+        if (res.ok && data.connected) {
           isConnectedToAtlas = true;
           badge.classList.remove('offline');
           text.textContent = `MongoDB Atlas: Conectado (${data.database})`;
-        } else {
-          isConnectedToAtlas = false;
-          badge.classList.add('offline');
-          text.textContent = data.error ? `Atlas Offline (${data.error.slice(0, 20)}...)` : 'MongoDB Offline';
+          return true;
         }
+
+        isConnectedToAtlas = false;
+        badge.classList.add('offline');
+        const shortError = data?.code || data?.error || 'MongoDB Offline';
+        text.textContent = `Atlas Offline (${String(shortError).slice(0, 28)})`;
+        return false;
       } catch (err) {
         isConnectedToAtlas = false;
         $('#db-badge').classList.add('offline');
         $('#db-status-text').textContent = 'Servidor API desconectado';
+        return false;
       }
     }
 
     // Carregar Tarefas e Anotações da API
     async function loadData() {
+      if (!isConnectedToAtlas) {
+        const local = localStorage.getItem('painel-tarefas-fallback');
+        if (local) {
+          try { State = JSON.parse(local); } catch (_) {}
+        }
+        render();
+        return;
+      }
+
       try {
         const [tasksRes, notesRes] = await Promise.all([
-          fetch('/api/tasks'),
-          fetch('/api/notes')
+          fetch('/api/tasks', { cache: 'no-store' }),
+          fetch('/api/notes', { cache: 'no-store' })
         ]);
 
-        if (tasksRes.ok) {
-          State.tasks = await tasksRes.json();
+        if (!tasksRes.ok || !notesRes.ok) {
+          throw new Error('Banco temporariamente indisponível');
         }
-        if (notesRes.ok) {
-          State.notes = await notesRes.json();
-        }
+
+        State.tasks = await tasksRes.json();
+        State.notes = await notesRes.json();
+        localStorage.setItem('painel-tarefas-fallback', JSON.stringify(State));
         render();
       } catch (err) {
         console.warn('Erro ao carregar do servidor, utilizando armazenamento local se disponível:', err);
+        isConnectedToAtlas = false;
         const local = localStorage.getItem('painel-tarefas-fallback');
         if (local) {
-          State = JSON.parse(local);
+          try { State = JSON.parse(local); } catch (_) {}
         }
         render();
       }
@@ -1457,9 +1472,19 @@
 
     // Inicialização
     async function init() {
-      await checkDbStatus();
-      await loadData();
-      setInterval(checkDbStatus, 15000); // Polling do status do banco a cada 15s
+      const online = await checkDbStatus();
+      if (online) {
+        await loadData();
+      } else {
+        render();
+      }
+
+      setInterval(async () => {
+        const recovered = await checkDbStatus();
+        if (recovered) {
+          await loadData();
+        }
+      }, 15000);
     }
 
     init();
