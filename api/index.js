@@ -29,6 +29,104 @@ const MONGODB_URI = rawUri.replace(/^["']|["']$/g, '').trim();
 const rawDbName = process.env.DB_NAME || 'painel_tarefas_db';
 const DB_NAME = rawDbName.replace(/^["']|["']$/g, '').trim();
 
+const RETENTION_MONTHS = 4;
+
+function parseRecordDate(value, fallback = new Date()) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return new Date(value.getTime());
+  }
+
+  if (typeof value === 'string') {
+    const isoDate = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoDate) {
+      const [, year, month, day] = isoDate;
+      return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 12, 0, 0));
+    }
+
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return new Date(fallback.getTime());
+}
+
+function calculateExpiresAt(baseDate) {
+  const date = parseRecordDate(baseDate);
+  const expiresAt = new Date(date.getTime());
+  expiresAt.setUTCMonth(expiresAt.getUTCMonth() + RETENTION_MONTHS);
+  return expiresAt;
+}
+
+async function ensureRetentionMetadata(db) {
+  const tasks = db.collection('tasks');
+  const notes = db.collection('notes');
+
+  await Promise.all([
+    tasks.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    notes.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    tasks.createIndex({ d: 1 }),
+  ]);
+
+  const taskOps = [];
+  const taskCursor = tasks.find(
+    { expiresAt: { $exists: false } },
+    { projection: { _id: 1, d: 1, createdAt: 1, updatedAt: 1 } }
+  );
+
+  for await (const task of taskCursor) {
+    const fallback =
+      task.createdAt ||
+      task.updatedAt ||
+      (task._id && typeof task._id.getTimestamp === 'function' ? task._id.getTimestamp() : new Date());
+
+    taskOps.push({
+      updateOne: {
+        filter: { _id: task._id, expiresAt: { $exists: false } },
+        update: { $set: { expiresAt: calculateExpiresAt(task.d || fallback) } }
+      }
+    });
+
+    if (taskOps.length >= 500) {
+      await tasks.bulkWrite(taskOps, { ordered: false });
+      taskOps.length = 0;
+    }
+  }
+
+  if (taskOps.length) {
+    await tasks.bulkWrite(taskOps, { ordered: false });
+  }
+
+  const noteOps = [];
+  const noteCursor = notes.find(
+    { expiresAt: { $exists: false } },
+    { projection: { _id: 1, date: 1, updatedAt: 1 } }
+  );
+
+  for await (const note of noteCursor) {
+    const fallback =
+      note.updatedAt ||
+      (note._id && typeof note._id.getTimestamp === 'function' ? note._id.getTimestamp() : new Date());
+
+    noteOps.push({
+      updateOne: {
+        filter: { _id: note._id, expiresAt: { $exists: false } },
+        update: { $set: { expiresAt: calculateExpiresAt(note.date || fallback) } }
+      }
+    });
+
+    if (noteOps.length >= 500) {
+      await notes.bulkWrite(noteOps, { ordered: false });
+      noteOps.length = 0;
+    }
+  }
+
+  if (noteOps.length) {
+    await notes.bulkWrite(noteOps, { ordered: false });
+  }
+}
+
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(process.cwd(), 'public')));
@@ -105,8 +203,12 @@ async function openDatabase() {
   const db = client.db(DB_NAME);
   await db.command({ ping: 1 });
 
-  db.collection('tasks').createIndex({ id: 1 }, { unique: true }).catch(() => {});
-  db.collection('notes').createIndex({ date: 1 }, { unique: true }).catch(() => {});
+  await Promise.all([
+    db.collection('tasks').createIndex({ id: 1 }, { unique: true }),
+    db.collection('notes').createIndex({ date: 1 }, { unique: true }),
+  ]);
+
+  await ensureRetentionMetadata(db);
 
   cachedClient = client;
   cachedDb = db;
@@ -145,6 +247,10 @@ app.get('/api/status', async (req, res) => {
       connected: true,
       database: DB_NAME,
       counts: { tasks: tasksCount, notes: notesCount },
+      retention: {
+        months: RETENTION_MONTHS,
+        mode: 'mongodb-ttl'
+      },
       timestamp: new Date().toISOString()
     });
   } catch (err) {
@@ -195,7 +301,8 @@ app.post('/api/tasks', async (req, res) => {
       c: Number.isInteger(task.c) ? task.c : 0,
       w: task.w ? String(task.w).trim() : '',
       n: task.n ? String(task.n).trim() : '',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      expiresAt: calculateExpiresAt(task.d || new Date())
     };
 
     await db.collection('tasks').updateOne({ id }, { $set: newTask }, { upsert: true });
@@ -211,10 +318,23 @@ app.put('/api/tasks/:id', async (req, res) => {
     const { db } = await getDatabase();
     const { id } = req.params;
     const task = req.body;
+    const current = await db.collection('tasks').findOne(
+      { id },
+      { projection: { _id: 0, d: 1, createdAt: 1, updatedAt: 1 } }
+    );
+
+    if (!current) {
+      return res.status(404).json({ error: 'Tarefa não encontrada' });
+    }
+
     const updateData = { ...task };
     delete updateData._id;
     delete updateData.id;
     updateData.updatedAt = new Date().toISOString();
+
+    const effectiveDate = updateData.d !== undefined ? updateData.d : current.d;
+    const retentionBase = effectiveDate || current.createdAt || current.updatedAt || new Date();
+    updateData.expiresAt = calculateExpiresAt(retentionBase);
 
     const result = await db.collection('tasks').updateOne({ id }, { $set: updateData });
     if (result.matchedCount === 0) {
@@ -255,9 +375,22 @@ app.post('/api/tasks/bulk', async (req, res) => {
       for (const t of tasks) {
         if (!t.t) continue;
         const id = t.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+        const createdAt = t.createdAt || new Date().toISOString();
         await db.collection('tasks').updateOne(
           { id },
-          { $set: { id, t: t.t, d: t.d || '', s: t.s || 'todo', c: t.c || 0, w: t.w || '', n: t.n || '' } },
+          {
+            $set: {
+              id,
+              t: t.t,
+              d: t.d || '',
+              s: t.s || 'todo',
+              c: Number.isInteger(t.c) ? t.c : 0,
+              w: t.w || '',
+              n: t.n || '',
+              createdAt,
+              expiresAt: calculateExpiresAt(t.d || createdAt)
+            }
+          },
           { upsert: true }
         );
         taskCount++;
@@ -269,7 +402,13 @@ app.post('/api/tasks/bulk', async (req, res) => {
         if (typeof content === 'string' && content.trim()) {
           await db.collection('notes').updateOne(
             { date },
-            { $set: { date, content: content.trim() } },
+            {
+              $set: {
+                date,
+                content: content.trim(),
+                expiresAt: calculateExpiresAt(date)
+              }
+            },
             { upsert: true }
           );
           noteCount++;
@@ -312,7 +451,14 @@ app.put('/api/notes/:date', async (req, res) => {
 
     await db.collection('notes').updateOne(
       { date },
-      { $set: { date, content: content.trim(), updatedAt: new Date().toISOString() } },
+      {
+        $set: {
+          date,
+          content: content.trim(),
+          updatedAt: new Date().toISOString(),
+          expiresAt: calculateExpiresAt(date)
+        }
+      },
       { upsert: true }
     );
     res.json({ success: true, date, content: content.trim() });
