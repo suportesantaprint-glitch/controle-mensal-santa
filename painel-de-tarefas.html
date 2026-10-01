@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
   <style>
     :root {
       --bg: #090d16;
@@ -870,9 +871,9 @@
       </div>
       <button class="btn primary" data-action="new-task">+ Nova Tarefa</button>
       <button class="btn" data-action="refresh" title="Recarregar do MongoDB">↻ Sincronizar</button>
-      <button class="btn" data-action="export">Exportar JSON</button>
-      <button class="btn" data-action="import">Importar JSON</button>
-      <input type="file" id="file-input" accept=".json" hidden>
+      <button class="btn" data-action="export">Exportar Excel</button>
+      <button class="btn" data-action="import">Importar Excel</button>
+      <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
     </div>
 
     <!-- Palco Principal (Calendário ou Kanban) + Lateral -->
@@ -1344,6 +1345,148 @@
       }
     });
 
+    // Exportação e importação Excel (XLSX)
+    function ensureXlsxAvailable() {
+      if (typeof XLSX === 'undefined') {
+        throw new Error('Biblioteca de Excel não carregou. Atualize a página e tente novamente.');
+      }
+    }
+
+    function normalizeExcelDate(value) {
+      if (value == null || value === '') return '';
+
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return iso(value);
+      }
+
+      if (typeof value === 'number' && typeof XLSX !== 'undefined') {
+        const parsed = XLSX.SSF.parse_date_code(value);
+        if (parsed) {
+          return `${parsed.y}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
+        }
+      }
+
+      const text = String(value).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+
+      const br = text.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+      if (br) {
+        return `${br[3]}-${String(br[2]).padStart(2, '0')}-${String(br[1]).padStart(2, '0')}`;
+      }
+
+      return '';
+    }
+
+    function normalizeImportedStatus(value) {
+      const status = String(value ?? '').trim().toLowerCase();
+      if (['done', 'concluído', 'concluido', 'concluída', 'concluida'].includes(status)) return 'done';
+      if (['doing', 'em andamento', 'andamento'].includes(status)) return 'doing';
+      return 'todo';
+    }
+
+    function exportToExcel() {
+      ensureXlsxAvailable();
+
+      const tasksRows = State.tasks.map(task => ({
+        ID: task.id || '',
+        Título: task.t || '',
+        Data: task.d || '',
+        Status: STATUS_MAP[task.s] || 'A fazer',
+        Responsável: task.w || '',
+        Cor: Number.isInteger(task.c) ? task.c : 0,
+        Anotações: task.n || ''
+      }));
+
+      const notesRows = Object.entries(State.notes)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, content]) => ({
+          Data: date,
+          Anotação: content || ''
+        }));
+
+      const workbook = XLSX.utils.book_new();
+      const tasksSheet = XLSX.utils.json_to_sheet(tasksRows.length ? tasksRows : [{
+        ID: '', Título: '', Data: '', Status: '', Responsável: '', Cor: '', Anotações: ''
+      }]);
+      const notesSheet = XLSX.utils.json_to_sheet(notesRows.length ? notesRows : [{
+        Data: '', Anotação: ''
+      }]);
+
+      tasksSheet['!cols'] = [
+        { wch: 18 }, { wch: 42 }, { wch: 14 }, { wch: 18 },
+        { wch: 24 }, { wch: 8 }, { wch: 50 }
+      ];
+      notesSheet['!cols'] = [{ wch: 14 }, { wch: 70 }];
+
+      XLSX.utils.book_append_sheet(workbook, tasksSheet, 'Tarefas');
+      XLSX.utils.book_append_sheet(workbook, notesSheet, 'Anotações');
+      XLSX.writeFile(workbook, `painel-tarefas-${today}.xlsx`, { compression: true });
+      showToast('Arquivo Excel exportado com sucesso!');
+    }
+
+    async function importFromExcel(file) {
+      ensureXlsxAvailable();
+
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+
+      const tasksSheetName = workbook.SheetNames.find(name => name.toLowerCase() === 'tarefas') || workbook.SheetNames[0];
+      const notesSheetName = workbook.SheetNames.find(name => ['anotações', 'anotacoes'].includes(name.toLowerCase()));
+
+      if (!tasksSheetName) {
+        throw new Error('A planilha não possui uma aba de tarefas.');
+      }
+
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[tasksSheetName], { defval: '', raw: true });
+      const tasks = rows
+        .map(row => {
+          const title = String(row['Título'] ?? row['Titulo'] ?? row['t'] ?? row['Title'] ?? '').trim();
+          if (!title) return null;
+
+          const colorRaw = Number(row['Cor'] ?? row['c'] ?? 0);
+          const color = Number.isInteger(colorRaw) && colorRaw >= 0 && colorRaw < COLORS.length ? colorRaw : 0;
+
+          return {
+            id: String(row['ID'] ?? row['id'] ?? '').trim() || uid(),
+            t: title.slice(0, 120),
+            d: normalizeExcelDate(row['Data'] ?? row['d']),
+            s: normalizeImportedStatus(row['Status'] ?? row['s']),
+            w: String(row['Responsável'] ?? row['Responsavel'] ?? row['w'] ?? '').trim().slice(0, 60),
+            n: String(row['Anotações'] ?? row['Anotacoes'] ?? row['n'] ?? '').trim(),
+            c: color
+          };
+        })
+        .filter(Boolean);
+
+      const notes = {};
+      if (notesSheetName) {
+        const noteRows = XLSX.utils.sheet_to_json(workbook.Sheets[notesSheetName], { defval: '', raw: true });
+        noteRows.forEach(row => {
+          const date = normalizeExcelDate(row['Data'] ?? row['date']);
+          const content = String(row['Anotação'] ?? row['Anotacao'] ?? row['content'] ?? '').trim();
+          if (date && content) notes[date] = content;
+        });
+      }
+
+      if (tasks.length === 0 && Object.keys(notes).length === 0) {
+        throw new Error('Nenhuma tarefa ou anotação válida foi encontrada no Excel.');
+      }
+
+      const res = await fetch('/api/tasks/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tasks, notes })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Falha ao importar o Excel no servidor');
+      }
+
+      showToast(`Excel importado: ${tasks.length} tarefa(s) e ${Object.keys(notes).length} anotação(ões).`);
+      await loadData();
+    }
+
     // Eventos Globais de Clique
     document.addEventListener('click', async e => {
       const el = e.target.closest('[data-action]');
@@ -1386,40 +1529,28 @@
         await loadData();
         showToast('Dados sincronizados com o Atlas!');
       } else if (action === 'export') {
-        const blob = new Blob([JSON.stringify(State, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `painel-tarefas-backup-${today}.json`;
-        a.click();
+        try {
+          exportToExcel();
+        } catch (err) {
+          showToast('Erro ao exportar Excel: ' + err.message, 'error');
+        }
       } else if (action === 'import') {
         $('#file-input').click();
       }
     });
 
-    // Importação de JSON
+    // Importação de Excel
     $('#file-input').onchange = async e => {
       const file = e.target.files[0];
       if (!file) return;
+
       try {
-        const text = await file.text();
-        const data = JSON.parse(text);
-
-        const res = await fetch('/api/tasks/bulk', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data)
-        });
-
-        if (res.ok) {
-          showToast('Importação concluída com sucesso!');
-          await loadData();
-        } else {
-          throw new Error('Falha ao importar no servidor');
-        }
+        await importFromExcel(file);
       } catch (err) {
-        alert('Erro ao importar arquivo: ' + err.message);
+        alert('Erro ao importar Excel: ' + err.message);
+      } finally {
+        e.target.value = '';
       }
-      e.target.value = '';
     };
 
     // Busca em tempo real
